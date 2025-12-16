@@ -3,12 +3,12 @@ import {
   Col,
   Card,
   Typography,
-  Statistic,
   Progress,
   Tag,
   DatePicker,
   Divider,
   Tabs,
+  Segmented,
   Pagination,
   Space,
 } from "antd";
@@ -82,6 +82,8 @@ const statisticResult = {
 
 /* ================= CONFIG ================= */
 const PAGE_SIZE = 6;
+const RANK_PAGE_SIZE = 4;
+const UPCOMING_PAGE_SIZE = 4;
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -94,6 +96,29 @@ const Dashboard = () => {
   const [teamPage, setTeamPage] = useState(1);
   const [projectPage, setProjectPage] = useState(1);
   const [taskPage, setTaskPage] = useState(1);
+  const [rankPage, setRankPage] = useState(1);
+  const [upcomingPage, setUpcomingPage] = useState(1);
+  const [statsView, setStatsView] = useState<'projects' | 'tasks'>('projects');
+  const [overviewOption, setOverviewOption] = useState<'all' | 'week' | 'month' | 'year'>('month');
+
+  const applyOverviewOption = (opt: 'all' | 'week' | 'month' | 'year') => {
+    setOverviewOption(opt);
+
+    if (opt === 'week') {
+      setRange([dayjs().startOf('week'), dayjs().endOf('week')]);
+    } else if (opt === 'month') {
+      setRange([dayjs().startOf('month'), dayjs().endOf('month')]);
+    } else if (opt === 'year') {
+      setRange([dayjs().startOf('year'), dayjs().endOf('year')]);
+    } else if (opt === 'all') {
+      // expand range to cover all task deadlines
+      if (tasks.length) {
+        const min = dayjs(Math.min(...tasks.map((t) => t.deadline.valueOf()))).startOf('day');
+        const max = dayjs(Math.max(...tasks.map((t) => t.deadline.valueOf()))).endOf('day');
+        setRange([min, max]);
+      }
+    }
+  };
 
   /* ================= CALCULATE (KHÔNG THỪA BIẾN) ================= */
 
@@ -113,6 +138,69 @@ const Dashboard = () => {
     []
   );
 
+  const avgTeamProgress = useMemo(() => {
+    if (!teams.length) return 0;
+    const totalPercent = teams.reduce((s, t) => s + (t.doneTasks / (t.totalTasks || 1)) * 100, 0);
+    return Math.round(totalPercent / teams.length);
+  }, []);
+
+  const StatCard = ({
+    title,
+    value,
+    prefix,
+    description,
+    extra,
+    color = '#1890ff',
+    statusColor,
+    onClick,
+  }: {
+    title: string;
+    value: React.ReactNode;
+    prefix?: React.ReactNode;
+    description?: React.ReactNode;
+    extra?: React.ReactNode;
+    color?: string;
+    statusColor?: string;
+    onClick?: () => void;
+  }) => (
+    <Card
+      hoverable
+      onClick={onClick}
+      style={{ overflow: 'hidden', borderRadius: 12, boxShadow: '0 8px 28px rgba(0,0,0,0.06)', cursor: onClick ? 'pointer' : 'default' }}
+    >
+      {/* status bar */}
+      {statusColor ? (
+        <div style={{ height: 6, background: statusColor, width: '100%' }} />
+      ) : null}
+
+      <div style={{ padding: 12, display: 'flex', alignItems: 'center' }}>
+        <div style={{ width: 56, height: 56, borderRadius: 12, background: `${color}10`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 16, color }}>
+          {prefix}
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <Text type="secondary">{title}</Text>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div>
+            {extra}
+          </div>
+          {description && <div style={{ marginTop: 6, fontSize: 12, color: '#666' }}>{description}</div>}
+        </div>
+      </div>
+    </Card>
+  );
+
+  // Tasks within selected range (used for overview granularity)
+  const tasksInRange = useMemo(() => {
+    const start = range[0].valueOf();
+    const end = range[1].valueOf();
+    return tasks.filter((t) => t.deadline.valueOf() >= start && t.deadline.valueOf() <= end);
+  }, [range]);
+
+  const overdueInRange = useMemo(() => tasksInRange.filter((t) => t.deadline.isBefore(dayjs())).length, [tasksInRange]);
+  const upcomingInRange = useMemo(() => tasksInRange.filter((t) => t.deadline.isAfter(dayjs())).length, [tasksInRange]);
+
+
   // PROJECT OVERVIEW
   const totalProjects = projects.length;
   const doneProjects = useMemo(
@@ -124,9 +212,14 @@ const Dashboard = () => {
     []
   );
 
+  const inProgressProjects = useMemo(
+    () => projects.filter((p) => p.status === "IN_PROGRESS").length,
+    []
+  );
+
   // RANKING
   const rankedTeams = useMemo(
-    () => [...teams].sort((a, b) => b.doneTasks - a.doneTasks).slice(0, 8),
+    () => [...teams].sort((a, b) => b.doneTasks - a.doneTasks),
     []
   );
 
@@ -134,8 +227,7 @@ const Dashboard = () => {
   const upcomingTasks = useMemo(
     () =>
       [...tasks]
-        .sort((a, b) => a.deadline.valueOf() - b.deadline.valueOf())
-        .slice(0, 6),
+        .sort((a, b) => a.deadline.valueOf() - b.deadline.valueOf()),
     []
   );
   
@@ -157,6 +249,16 @@ const Dashboard = () => {
     [taskPage]
   );
 
+  const pagedRankedTeams = useMemo(
+    () => rankedTeams.slice((rankPage - 1) * RANK_PAGE_SIZE, rankPage * RANK_PAGE_SIZE),
+    [rankPage, rankedTeams]
+  );
+
+  const pagedUpcomingTasks = useMemo(
+    () => upcomingTasks.slice((upcomingPage - 1) * UPCOMING_PAGE_SIZE, upcomingPage * UPCOMING_PAGE_SIZE),
+    [upcomingPage, upcomingTasks]
+  );
+
   /* ================= PIE (TASK STATUS) ================= */
 
   const pieConfig = {
@@ -164,6 +266,21 @@ const Dashboard = () => {
       { type: "Hoàn thành", value: statisticResult.taskDone },
       { type: "Chưa hoàn thành", value: statisticResult.taskPending },
       { type: "Quá hạn", value: statisticResult.taskOverdue },
+    ],
+    angleField: "value",
+    colorField: "type",
+    radius: 1,
+    innerRadius: 0.65,
+    label: { type: "inner", content: "{value}" },
+    legend: { position: "bottom" },
+    interactions: [{ type: "element-active" }],
+  };
+
+  const projectPieConfig = {
+    data: [
+      { type: "Hoàn thành", value: doneProjects },
+      { type: "Đang tiến hành", value: Math.max(0, totalProjects - doneProjects - overdueProjects) },
+      { type: "Quá hạn", value: overdueProjects },
     ],
     angleField: "value",
     colorField: "type",
@@ -184,62 +301,90 @@ const Dashboard = () => {
     <>
       {/* ================= OVERVIEW ================= */}
       <Card style={{ marginBottom: 24 }}>
-        <Title level={4}>📊 Tổng quan hệ thống</Title>
+        <Row justify="space-between" align="middle">
+          <Title level={4} style={{ marginBottom: 0 }}>📊 Tổng quan hệ thống</Title>
 
-        <Row gutter={16}>
-          <Col span={4}>
-            <Statistic
-              title="Team"
-              value={totalTeams}
-              prefix={<TeamOutlined />}
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <Segmented
+              options={[
+                { label: 'Tất cả', value: 'all' },
+                { label: 'Tuần', value: 'week' },
+                { label: 'Tháng', value: 'month' },
+                { label: 'Năm', value: 'year' },
+              ]}
+              value={overviewOption}
+              onChange={(v) => applyOverviewOption(v as 'all' | 'week' | 'month' | 'year')}
             />
-          </Col>
 
-          <Col span={4}>
-            <Statistic
-              title="Project"
-              value={totalProjects}
-              prefix={<ProjectOutlined />}
-            />
-          </Col>
+            <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+              {range[0].format('DD/MM/YYYY')} – {range[1].format('DD/MM/YYYY')}
+            </Text>
+          </div>
+        </Row>
 
-          <Col span={4}>
-            <Statistic
-              title="Project hoàn thành"
-              value={doneProjects}
-              valueStyle={{ color: "#52c41a" }}
-            />
-          </Col>
+        <Row gutter={[16, 16]}>
+          {[
+            {
+              key: 'team',
+              title: 'Team',
+              value: totalTeams,
+              prefix: <TeamOutlined style={{ fontSize: 20 }} />,
+              description: <span>Trung bình tiến độ: <b>{avgTeamProgress}%</b></span>,
+              color: '#1890ff',
+              statusColor: '#1890ff',
+            },
+            {
+              key: 'project',
+              title: `Project (${overviewOption === 'all' ? 'Tất cả' : overviewOption})`,
+              value: totalProjects,
+              prefix: <ProjectOutlined style={{ fontSize: 20 }} />,
+              description: (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#888' }}>Trong kỳ</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{totalProjects}</div>
+                    <div style={{ fontSize: 12, color: '#888' }}>Hoàn thành: <Text strong>{doneProjects}</Text></div>
+                  </div>
 
-          <Col span={4}>
-            <Statistic
-              title="Project quá hạn"
-              value={overdueProjects}
-              valueStyle={{ color: "#ff4d4f" }}
-            />
-          </Col>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 12, color: '#888' }}>Đang tiến</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{inProgressProjects}</div>
+                    <div style={{ fontSize: 12, marginTop: 6 }}><Text type="danger">Quá hạn: {overdueProjects}</Text></div>
+                  </div>
+                </div>
+              ),
+              color: '#fa8c16',
+              statusColor: '#1890ff',
+            },
 
-          <Col span={4}>
-            <Statistic title="Tổng task" value={totalTasks} />
-          </Col>
-
-          <Col span={4}>
-            <Statistic
-              title="Task hoàn thành"
-              value={doneTasks}
-              valueStyle={{ color: "#52c41a" }}
-              prefix={<CheckCircleOutlined />}
-            />
-          </Col>
-
-          <Col span={4}>
-            <Statistic
-              title="Task quá hạn"
-              value={overdueTasks}
-              valueStyle={{ color: "#ff4d4f" }}
-              prefix={<FireOutlined />}
-            />
-          </Col>
+            {
+              key: 'risk',
+              title: 'Rủi ro (quá hạn)',
+              value: overdueInRange,
+              prefix: <FireOutlined style={{ fontSize: 20 }} />,
+              description: 'Xem chi tiết phần Rủi ro bên dưới',
+              color: '#ff4d4f',
+            },
+            {
+              key: 'task',
+              title: `Task (${overviewOption === 'all' ? 'Tất cả' : overviewOption})`,
+              value: totalTasks,
+              prefix: <CheckCircleOutlined style={{ fontSize: 20 }} />,
+              description: (
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div style={{ fontSize: 12, color: '#666' }}>Trong kỳ<br/><b>{tasksInRange.length}</b></div>
+                  <div style={{ fontSize: 12, color: '#666' }}>Sắp đến<br/><b>{upcomingInRange}</b></div>
+                  <div style={{ fontSize: 12, color: '#ff4d4f' }}>Quá hạn<br/><b>{overdueInRange}</b></div>
+                </div>
+              ),
+              color: '#13c2c2',
+              statusColor: '#1890ff',
+            },
+          ].map((c) => (
+            <Col xs={24} sm={12} md={6} lg={6} key={c.key}>
+              <StatCard title={c.title} value={c.value} prefix={c.prefix} description={c.description} color={c.color} />
+            </Col>
+          ))}
         </Row>
       </Card>
 
@@ -398,17 +543,47 @@ const Dashboard = () => {
             📈 Thống kê & hành động
           </Title>
 
-          <RangePicker
-            value={range}
-            onChange={(v) => v && setRange(v as [Dayjs, Dayjs])}
-            format="DD/MM/YYYY"
-          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Segmented
+              options={[
+                { label: 'Tất cả', value: 'all' },
+                { label: 'Tuần', value: 'week' },
+                { label: 'Tháng', value: 'month' },
+                { label: 'Năm', value: 'year' },
+              ]}
+              value={overviewOption}
+              onChange={(v) => applyOverviewOption(v as 'all' | 'week' | 'month' | 'year')}
+            />
+
+            <RangePicker
+              value={range}
+              onChange={(v) => v && setRange(v as [Dayjs, Dayjs])}
+              format="DD/MM/YYYY"
+            />
+          </div>
         </Row>
 
         <Row gutter={24} style={{ marginTop: 16 }}>
-          {/* LEFT – PIE + SUMMARY */}
+          {/* LEFT – SWITCHABLE PIE (PROJECT / TASK) + SUMMARY */}
           <Col span={12}>
-            <Pie {...pieConfig} />
+            <Segmented
+              options={[{ label: "Dự án", value: "projects" }, { label: "Task", value: "tasks" }]}
+              value={statsView}
+              onChange={(v) => setStatsView(v as "projects" | "tasks")}
+              style={{ marginBottom: 12 }}
+            />
+
+            {statsView === "projects" ? (
+              <>
+                <Title level={5}>📦 Thống kê theo dự án</Title>
+                <Pie {...projectPieConfig} />
+              </>
+            ) : (
+              <>
+                <Title level={5}>📝 Thống kê theo task</Title>
+                <Pie {...pieConfig} />
+              </>
+            )}
 
             <Divider />
 
@@ -418,15 +593,17 @@ const Dashboard = () => {
             </Text>
 
             <div style={{ marginTop: 10 }}>
-              <Text>
-                • Project: {doneProjects}/{totalProjects} hoàn thành –{" "}
-                <Text type="danger">{overdueProjects} quá hạn</Text>
-              </Text>
-              <br />
-              <Text>
-                • Task: {doneTasks}/{totalTasks} hoàn thành –{" "}
-                <Text type="danger">{overdueTasks} quá hạn</Text>
-              </Text>
+              {statsView === "projects" ? (
+                <Text>
+                  • Project: {doneProjects}/{totalProjects} hoàn thành –{" "}
+                  <Text type="danger">{overdueProjects} quá hạn</Text>
+                </Text>
+              ) : (
+                <Text>
+                  • Task: {doneTasks}/{totalTasks} hoàn thành –{" "}
+                  <Text type="danger">{overdueTasks} quá hạn</Text>
+                </Text>
+              )}
             </div>
           </Col>
 
@@ -434,9 +611,10 @@ const Dashboard = () => {
           <Col span={12}>
             <Title level={5} style={{ marginTop: 0 }}>
               🏆 Top team hiệu suất
-            </Title>
+            </Title>  
 
-            {rankedTeams.slice(0, 4).map((team, index) => {
+            {pagedRankedTeams.map((team, indexInPage) => {
+              const index = (rankPage - 1) * RANK_PAGE_SIZE + indexInPage;
               const percent = Math.round((team.doneTasks / team.totalTasks) * 100);
               const medal =
                 index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "⭐";
@@ -461,12 +639,21 @@ const Dashboard = () => {
               );
             })}
 
+            <Pagination
+              current={rankPage}
+              pageSize={RANK_PAGE_SIZE}
+              total={rankedTeams.length}
+              onChange={setRankPage}
+              align="center"
+              showSizeChanger={false}
+            />
+
             <Divider />
             <Title level={5} style={{ marginTop: 0 }}>
               ⏰ Task sắp đến hạn
             </Title>
 
-            {upcomingTasks.slice(0, 4).map((task) => {
+            {pagedUpcomingTasks.map((task) => {
               const hoursLeft = task.deadline.diff(dayjs(), "hour");
               const color =
                 hoursLeft <= 12 ? "#ff4d4f" : hoursLeft <= 48 ? "#fa8c16" : "#52c41a";
@@ -497,6 +684,15 @@ const Dashboard = () => {
                 </Card>
               );
             })}
+
+            <Pagination
+              current={upcomingPage}
+              pageSize={UPCOMING_PAGE_SIZE}
+              total={upcomingTasks.length}
+              onChange={setUpcomingPage}
+              align="center"
+              showSizeChanger={false}
+            />
           </Col>
         </Row>
       </Card>
